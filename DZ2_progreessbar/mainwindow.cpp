@@ -1,6 +1,7 @@
 #include "MainWindow.h"
 #include <QVBoxLayout>
 
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
 {
@@ -32,9 +33,22 @@ MainWindow::MainWindow(QWidget *parent)
 //    layout->addWidget(button2);
 
 
+
+
     connect(button, &CustomButton::clicked, this, &MainWindow::onButtonClicked);
     connect(button2, &CustomButton::clicked,this, &MainWindow::onButtonDec);
     connect(switchWidget , &TriStateSwitch::stateChanged, this, &MainWindow::onSwitchStateChanged);
+
+    connect(button, &CustomButton::pressed, this, &MainWindow::onIncrementButtonPressed);
+    connect(button, &CustomButton::released, this, &MainWindow::onButtonReleased);
+    connect(button2, &CustomButton::pressed, this, &MainWindow::onDecrementButtonPressed);
+    connect(button2, &CustomButton::released, this, &MainWindow::onButtonReleased);
+
+    connect(&incrementTimer, &QTimer::timeout, this, &MainWindow::onIncrementTimeout);
+    connect(&decrementTimer, &QTimer::timeout, this, &MainWindow::onDecrementTimeout);
+
+    incrementTimer.setInterval(100);
+    decrementTimer.setInterval(100);
 
 
     // Устанавливаем фокус на прогрессбар при создании окна
@@ -74,5 +88,47 @@ void MainWindow::onSwitchStateChanged(int state)
         progressBar->setValue(66);
     } else if (state == 2) {
         progressBar->setValue(100);
+    }
+}
+
+void MainWindow::onIncrementButtonPressed()
+{
+    incrementButtonPressed = true;
+    QTimer::singleShot(1000, this, [this]() {
+        if (incrementButtonPressed) {
+            incrementTimer.start();
+        }
+    });
+}
+
+void MainWindow::onDecrementButtonPressed()
+{
+    decrementButtonPressed = true;
+    QTimer::singleShot(1000, this, [this]() {
+        if (decrementButtonPressed) {
+            decrementTimer.start();
+        }
+    });
+}
+
+void MainWindow::onButtonReleased()
+{
+    incrementButtonPressed = false;
+    decrementButtonPressed = false;
+    incrementTimer.stop();
+    decrementTimer.stop();
+}
+
+void MainWindow::onIncrementTimeout()
+{
+    int currentProgress = progressBar->value();
+    progressBar->setValue((currentProgress + 1) % 101);
+}
+
+void MainWindow::onDecrementTimeout()
+{
+    int currentProgress = progressBar->value();
+    if (currentProgress > 0) {
+        progressBar->setValue(currentProgress - 1);
     }
 }

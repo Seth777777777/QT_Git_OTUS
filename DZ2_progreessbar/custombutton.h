@@ -3,6 +3,8 @@
 
 #include <QWidget>
 #include <QString>
+#include <QTimer>
+
 
 class CustomButton : public QWidget
 {
@@ -13,6 +15,8 @@ public:
 
 signals:
     void clicked();
+    void pressed();
+    void released();
 
 protected:
     void paintEvent(QPaintEvent *event) override;
@@ -21,9 +25,11 @@ protected:
     void keyPressEvent(QKeyEvent *event) override;
     void keyReleaseEvent(QKeyEvent *event) override;
 
+
 private:
     QString text;
     bool isPressed;
+
 };
 
 #endif // CUSTOMBUTTON_H
