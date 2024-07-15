@@ -21,46 +21,85 @@ bool TableCreator::createTableIfNotExists(const QString &dbName) {
         return false;
     }
 
-    QSqlQuery query(db);
-    QString createTableQuery = "CREATE TABLE IF NOT EXISTS transactions ("
-                               "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                               "kontagent TEXT, "
-                               "inn TEXT, "
-                               "date_oper TEXT, "
-                               "sum_oper REAL, "
-                               "pay_purpose TEXT);";
+    QSqlQuery query;
 
-    if (!query.exec(createTableQuery)) {
-        qDebug() << "Error: unable to create table:" << query.lastError();
+    QString createCounterpartiesTable = R"(
+        CREATE TABLE IF NOT EXISTS counterparties (
+            counterparty_id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL
+        );
+    )";
+
+    QString createInnsTable = R"(
+        CREATE TABLE IF NOT EXISTS inns (
+            counterparty_id INTEGER,
+            inn TEXT NOT NULL,
+            satellite INTEGER,
+            PRIMARY KEY(counterparty_id, inn)
+        );
+    )";
+
+    QString createOperationDatesTable = R"(
+        CREATE TABLE IF NOT EXISTS operation_dates (
+            counterparty_id INTEGER,
+            date_oper TEXT NOT NULL,
+            operation_id INTEGER PRIMARY KEY AUTOINCREMENT
+        );
+    )";
+
+    QString createIncomingAmountsTable = R"(
+        CREATE TABLE IF NOT EXISTS incoming_amounts (
+            operation_id INTEGER,
+            amount REAL NOT NULL,
+            PRIMARY KEY(operation_id, amount)
+        );
+    )";
+
+    QString createPaymentPurposesTable = R"(
+        CREATE TABLE IF NOT EXISTS payment_purposes (
+            operation_id INTEGER,
+            purpose TEXT NOT NULL,
+            PRIMARY KEY(operation_id, purpose)
+        );
+    )";
+
+    QString createSuppliersTable = R"(
+        CREATE TABLE IF NOT EXISTS suppliers (
+            operation_id INTEGER,
+            supplier_inn TEXT NOT NULL,
+            PRIMARY KEY(operation_id, supplier_inn)
+        );
+    )";
+
+    if (!query.exec(createCounterpartiesTable)) {
+        qDebug() << "Failed to create table counterparties:" << query.lastError().text();
+        return false;
+    }
+
+    if (!query.exec(createInnsTable)) {
+        qDebug() << "Failed to create table inns:" << query.lastError().text();
+        return false;
+    }
+
+    if (!query.exec(createOperationDatesTable)) {
+        qDebug() << "Failed to create table operation_dates:" << query.lastError().text();
+        return false;
+    }
+
+    if (!query.exec(createIncomingAmountsTable)) {
+        qDebug() << "Failed to create table incoming_amounts:" << query.lastError().text();
+        return false;
+    }
+
+    if (!query.exec(createPaymentPurposesTable)) {
+        qDebug() << "Failed to create table payment_purposes:" << query.lastError().text();
+        return false;
+    }
+
+    if (!query.exec(createSuppliersTable)) {
+        qDebug() << "Failed to create table suppliers:" << query.lastError().text();
         return false;
     }
 
     return true;
-}
-
-bool TableCreator::insertData(const QStringList &data) {
-    if (!db.isOpen()) {
-        qDebug() << "Database is not open";
-        return false;
-    }
-
-    QSqlQuery query(db);
-    query.prepare("INSERT INTO transactions (kontagent, inn, date_oper, sum_oper, pay_purpose) "
-                  "VALUES (?, ?, ?, ?, ?)");
-
-    query.addBindValue(data[0]);
-    query.addBindValue(data[1]);
-    query.addBindValue(data[2]);
-    query.addBindValue(data[3]);
-    query.addBindValue(data[4]);
-
-    if (!query.exec()) {
-        qDebug() << "Failed to insert data:" << query.lastError().text();
-        return false;
-    }
-    return true;
-}
-
-QSqlDatabase TableCreator::getDatabase() {
-    return db;
 }

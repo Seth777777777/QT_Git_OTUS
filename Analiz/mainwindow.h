@@ -23,17 +23,19 @@ private slots:
     void on_btnPreviousData_clicked();
     void on_btnCalculateSum_clicked();
     void showDatabaseInfo();
+    void updateStatusLabel(int currentRow, int totalRows);
 
 private:
     Ui::MainWindow *ui;
     QSqlDatabase db;
     int currentOffset; // Текущий сдвиг для выборки данных
+    int totalRows; // Общее количество строк
 
     bool openDatabase();
     void closeDatabase();
-    void insertDataToDatabase(const QStringList &data);
-    void loadData(int offset);
-    void loadTurnoverData(int offset); // Новый метод для загрузки данных с оборотом
+    void insertDataToDatabase(const QStringList &data, int currentRow, int totalRows);
+    void loadTurnoverData(int offset);
+    void clearTables();
 };
 
 #endif // MAINWINDOW_H

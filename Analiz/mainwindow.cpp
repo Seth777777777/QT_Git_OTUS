@@ -7,11 +7,13 @@
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QMessageBox>
+#include <QApplication>  // Для processEvents
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , ui(new Ui::MainWindow)
     , currentOffset(0) // Инициализация сдвига
+    , totalRows(0)
 {
     ui->setupUi(this);
     if (!openDatabase()) {
@@ -36,6 +38,10 @@ MainWindow::~MainWindow()
 
 bool MainWindow::openDatabase()
 {
+    if (db.isOpen()) {
+        return true;
+    }
+
     db = QSqlDatabase::addDatabase("QSQLITE");
     db.setDatabaseName("analiz.db");
 
@@ -44,29 +50,17 @@ bool MainWindow::openDatabase()
         return false;
     }
 
-    QSqlQuery query;
-    QString createTableQuery = "CREATE TABLE IF NOT EXISTS transactions ("
-                               "id INTEGER PRIMARY KEY AUTOINCREMENT, "
-                               "kontagent TEXT, "
-                               "inn TEXT, "
-                               "date_oper TEXT, "
-                               "sum_oper REAL, "
-                               "pay_purpose TEXT)";
-
-    if (!query.exec(createTableQuery)) {
-        qDebug() << "Failed to create table:" << query.lastError().text();
-        return false;
-    }
-
     return true;
 }
 
 void MainWindow::closeDatabase()
 {
-    db.close();
+    if (db.isOpen()) {
+        db.close();
+    }
 }
 
-void MainWindow::insertDataToDatabase(const QStringList &data)
+void MainWindow::insertDataToDatabase(const QStringList &data, int currentRow, int totalRows)
 {
     if (!db.isOpen() && !openDatabase()) {
         qDebug() << "Database is not open and cannot be opened";
@@ -74,18 +68,64 @@ void MainWindow::insertDataToDatabase(const QStringList &data)
     }
 
     QSqlQuery query;
-    query.prepare("INSERT INTO transactions (kontagent, inn, date_oper, sum_oper, pay_purpose) "
-                  "VALUES (?, ?, ?, ?, ?)");
 
+    // Вставка в таблицу контрагентов
+    query.prepare("INSERT INTO counterparties (name) VALUES (?)");
     query.addBindValue(data[0]);
-    query.addBindValue(data[1]);
-    query.addBindValue(data[2]);
-    query.addBindValue(data[3]);
-    query.addBindValue(data[4]);
-
     if (!query.exec()) {
-        qDebug() << "Failed to insert data:" << query.lastError().text();
+        qDebug() << "Failed to insert data into counterparties:" << query.lastError().text();
+        return;
     }
+    int counterparty_id = query.lastInsertId().toInt();
+
+    // Вставка в таблицу ИНН
+    query.prepare("INSERT INTO inns (counterparty_id, inn) VALUES (?, ?)");
+    query.addBindValue(counterparty_id);
+    query.addBindValue(data[1]);
+    if (!query.exec()) {
+        qDebug() << "Failed to insert data into inns:" << query.lastError().text();
+        return;
+    }
+
+    // Вставка в таблицу дат операций
+    query.prepare("INSERT INTO operation_dates (counterparty_id, date_oper) VALUES (?, ?)");
+    query.addBindValue(counterparty_id);
+    query.addBindValue(data[2]);
+    if (!query.exec()) {
+        qDebug() << "Failed to insert data into operation_dates:" << query.lastError().text();
+        return;
+    }
+    int operation_id = query.lastInsertId().toInt();
+
+    // Вставка в таблицу приходов в рублях
+    query.prepare("INSERT INTO incoming_amounts (operation_id, amount) VALUES (?, ?)");
+    query.addBindValue(operation_id);
+    query.addBindValue(data[3]);
+    if (!query.exec()) {
+        qDebug() << "Failed to insert data into incoming_amounts:" << query.lastError().text();
+        return;
+    }
+
+    // Вставка в таблицу назначений платежа
+    query.prepare("INSERT INTO payment_purposes (operation_id, purpose) VALUES (?, ?)");
+    query.addBindValue(operation_id);
+    query.addBindValue(data[4]);
+    if (!query.exec()) {
+        qDebug() << "Failed to insert data into payment_purposes:" << query.lastError().text();
+        return;
+    }
+
+    // Вставка в таблицу поставщиков
+    query.prepare("INSERT INTO suppliers (operation_id, supplier_inn) VALUES (?, ?)");
+    query.addBindValue(operation_id);
+    query.addBindValue(data[1]);
+    if (!query.exec()) {
+        qDebug() << "Failed to insert data into suppliers:" << query.lastError().text();
+        return;
+    }
+
+    updateStatusLabel(currentRow, totalRows); // Обновление QLabel
+    QApplication::processEvents(); // Обновление пользовательского интерфейса
 }
 
 void MainWindow::showDatabaseInfo()
@@ -98,7 +138,7 @@ void MainWindow::showDatabaseInfo()
     QSqlQuery query;
     int totalRows = 0;
 
-    if (query.exec("SELECT COUNT(*) FROM transactions")) {
+    if (query.exec("SELECT COUNT(*) FROM counterparties")) {
         if (query.next()) {
             totalRows = query.value(0).toInt();
         }
@@ -118,9 +158,19 @@ void MainWindow::loadTurnoverData(int offset)
     }
 
     QSqlQuery query;
-    QString turnoverQuery = "SELECT kontagent, inn, date_oper, sum_oper, pay_purpose, "
-                            "(SELECT SUM(sum_oper) FROM transactions t2 WHERE t2.inn = t1.inn) as turnover "
-                            "FROM transactions t1 ORDER BY id LIMIT 15 OFFSET ?";
+    QString turnoverQuery = R"(
+        SELECT c.name, i.inn, o.date_oper, ia.amount, pp.purpose,
+        (SELECT SUM(ia2.amount) FROM incoming_amounts ia2
+         JOIN operation_dates o2 ON ia2.operation_id = o2.operation_id
+         WHERE o2.counterparty_id = o.counterparty_id) as turnover
+        FROM counterparties c
+        JOIN inns i ON c.counterparty_id = i.counterparty_id
+        JOIN operation_dates o ON c.counterparty_id = o.counterparty_id
+        JOIN incoming_amounts ia ON o.operation_id = ia.operation_id
+        JOIN payment_purposes pp ON o.operation_id = pp.operation_id
+        ORDER BY c.counterparty_id
+        LIMIT 15 OFFSET ?
+    )";
     query.prepare(turnoverQuery);
     query.addBindValue(offset);
 
@@ -131,7 +181,6 @@ void MainWindow::loadTurnoverData(int offset)
 
     ui->tableWidget->setRowCount(0);
 
-    // Установка заголовков столбцов таблицы, включая новый столбец "Оборот"
     QStringList headers;
     headers << "Контрагент" << "ИНН" << "Дата операции" << "Сумма операции" << "Назначение платежа" << "Оборот";
     ui->tableWidget->setColumnCount(headers.size());
@@ -149,9 +198,14 @@ void MainWindow::loadTurnoverData(int offset)
         ++row;
     }
 
-    // Автоматическая подгонка размера столбцов и строк
     ui->tableWidget->resizeColumnsToContents();
     ui->tableWidget->resizeRowsToContents();
+}
+
+void MainWindow::updateStatusLabel(int currentRow, int totalRows)
+{
+    ui->labelStatus->setText(tr("Processing row %1 of %2").arg(currentRow).arg(totalRows));
+    QApplication::processEvents(); // Обновление пользовательского интерфейса
 }
 
 void MainWindow::on_btnBrowse_clicked()
@@ -160,7 +214,7 @@ void MainWindow::on_btnBrowse_clicked()
     if (!filePath.isEmpty()) {
         ui->lineEditFilePath->setText(filePath);
 
-        // Создаем или открываем базу данных и таблицу
+        // Создаем или открываем базу данных и таблицы
         TableCreator tableCreator;
         if (!tableCreator.createTableIfNotExists("analiz.db")) {
             qDebug() << "Failed to create or open the database.";
@@ -173,6 +227,7 @@ void MainWindow::on_btnBrowse_clicked()
             QList<QList<QVariant>> data = excelReader.getSheetData();
 
             int startRow = 2; // Начальная строка (третья строка, индекс 2)
+            totalRows = data.size() - startRow;
             for (int row = startRow; row < data.size(); ++row) {
                 QString sumOper = data[row][21].toString();
                 if (sumOper.toDouble() == 0) {
@@ -186,22 +241,21 @@ void MainWindow::on_btnBrowse_clicked()
                         << sumOper                    // V - Сумма операции
                         << data[row][23].toString(); // X - Назначение платежа
 
-                insertDataToDatabase(rowData);
+                insertDataToDatabase(rowData, row - startRow + 1, totalRows);
             }
 
-            // Показать информацию о базе данных после добавления данных
             showDatabaseInfo();
 
-            // Обновить таблицу после добавления данных
             currentOffset = 0;
             loadTurnoverData(currentOffset);
+            ui->labelStatus->setText(tr("Processing completed."));
         } else {
             qDebug() << "Failed to read the XLSX file.";
         }
     }
 }
 
-void MainWindow::on_btnClearDatabase_clicked()
+void MainWindow::clearTables()
 {
     if (!db.isOpen() && !openDatabase()) {
         qDebug() << "Database is not open and cannot be opened";
@@ -209,17 +263,22 @@ void MainWindow::on_btnClearDatabase_clicked()
     }
 
     QSqlQuery query;
-    if (!query.exec("DELETE FROM transactions")) {
-        qDebug() << "Failed to clear the table:" << query.lastError().text();
-    } else {
-        qDebug() << "Table cleared successfully.";
-        // Показать информацию о базе данных после очистки данных
-        showDatabaseInfo();
+    QStringList tableNames = {"counterparties", "inns", "operation_dates", "incoming_amounts", "payment_purposes", "suppliers"};
 
-        // Обновить таблицу после очистки данных
-        currentOffset = 0;
-        loadTurnoverData(currentOffset);
+    for (const QString &tableName : tableNames) {
+        if (!query.exec("DELETE FROM " + tableName)) {
+            qDebug() << "Failed to clear table " << tableName << ":" << query.lastError().text();
+        }
     }
+}
+
+void MainWindow::on_btnClearDatabase_clicked()
+{
+    clearTables();
+    showDatabaseInfo();
+    currentOffset = 0;
+    loadTurnoverData(currentOffset);
+    ui->labelStatus->setText(tr("Tables cleared."));
 }
 
 void MainWindow::on_btnNextData_clicked()
@@ -254,7 +313,12 @@ void MainWindow::on_btnCalculateSum_clicked()
     }
 
     QSqlQuery query;
-    if (!query.exec("SELECT SUM(sum_oper) FROM transactions")) {
+    QString sumQuery = R"(
+        SELECT SUM(amount)
+        FROM incoming_amounts
+    )";
+
+    if (!query.exec(sumQuery)) {
         qDebug() << "Failed to calculate sum:" << query.lastError().text();
         return;
     }
