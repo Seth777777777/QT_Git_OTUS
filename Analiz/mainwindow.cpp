@@ -168,7 +168,7 @@ void MainWindow::loadTurnoverData(int offset)
         JOIN operation_dates o ON c.counterparty_id = o.counterparty_id
         JOIN incoming_amounts ia ON o.operation_id = ia.operation_id
         JOIN payment_purposes pp ON o.operation_id = pp.operation_id
-        ORDER BY c.counterparty_id
+        ORDER BY i.inn, o.date_oper
         LIMIT 15 OFFSET ?
     )";
     query.prepare(turnoverQuery);
@@ -187,14 +187,82 @@ void MainWindow::loadTurnoverData(int offset)
     ui->tableWidget->setHorizontalHeaderLabels(headers);
 
     int row = 0;
+    QString lastInn;
+    QString lastCounterpartyName;
+    double totalTurnover = 0.0;
+
     while (query.next()) {
+        QString currentCounterpartyName = query.value(0).toString();
+        QString currentInn = query.value(1).toString();
+
+        if (currentInn != lastInn) {
+            lastInn = currentInn;
+            QSqlQuery sumQuery;
+            sumQuery.prepare(R"(
+                SELECT SUM(ia.amount)
+                FROM incoming_amounts ia
+                JOIN operation_dates o ON ia.operation_id = o.operation_id
+                JOIN counterparties c ON o.counterparty_id = c.counterparty_id
+                JOIN inns i ON c.counterparty_id = i.counterparty_id
+                WHERE i.inn = ?
+            )");
+            sumQuery.addBindValue(lastInn);
+            if (!sumQuery.exec()) {
+                qDebug() << "Failed to calculate turnover:" << sumQuery.lastError().text();
+                return;
+            }
+            if (sumQuery.next()) {
+                totalTurnover = sumQuery.value(0).toDouble();
+            }
+        }
+
         ui->tableWidget->insertRow(row);
-        ui->tableWidget->setItem(row, 0, new QTableWidgetItem(query.value(0).toString()));
-        ui->tableWidget->setItem(row, 1, new QTableWidgetItem(query.value(1).toString()));
-        ui->tableWidget->setItem(row, 2, new QTableWidgetItem(query.value(2).toString()));
-        ui->tableWidget->setItem(row, 3, new QTableWidgetItem(query.value(3).toString()));
-        ui->tableWidget->setItem(row, 4, new QTableWidgetItem(query.value(4).toString()));
-        ui->tableWidget->setItem(row, 5, new QTableWidgetItem(query.value(5).toString())); // Оборот
+
+        QTableWidgetItem *item0 = new QTableWidgetItem();
+        QTableWidgetItem *item1 = new QTableWidgetItem();
+        QTableWidgetItem *item5 = new QTableWidgetItem();
+
+        if (currentCounterpartyName != lastCounterpartyName) {
+            item0->setText(currentCounterpartyName);
+            item1->setText(query.value(1).toString());
+            lastCounterpartyName = currentCounterpartyName;
+            qDebug() << "Вывожу имя контрагента: " << currentCounterpartyName;
+        } else {
+            item0->setText("");
+            item1->setText("");
+            qDebug() << "Вставляю пустую строчку для контрагента: " << currentCounterpartyName;
+        }
+
+        item5->setText(QString::number(totalTurnover, 'f', 2));
+
+        item0->setTextAlignment(Qt::AlignLeft | Qt::AlignTop);
+        item0->setFlags(item0->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 0, item0);
+
+        item1->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        item1->setFlags(item1->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 1, item1);
+
+        QTableWidgetItem *item2 = new QTableWidgetItem(query.value(2).toString());
+        item2->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        item2->setFlags(item2->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 2, item2);
+
+        QTableWidgetItem *item3 = new QTableWidgetItem(query.value(3).toString());
+        item3->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        item3->setFlags(item3->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 3, item3);
+
+        QTableWidgetItem *item4 = new QTableWidgetItem(query.value(4).toString());
+        item4->setTextAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        item4->setText(query.value(4).toString().replace(QRegularExpression("(.{70})"), "\\1\n"));
+        item4->setFlags(item4->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 4, item4);
+
+        item5->setTextAlignment(Qt::AlignRight | Qt::AlignVCenter);
+        item5->setFlags(item5->flags() & ~Qt::ItemIsEditable);
+        ui->tableWidget->setItem(row, 5, item5);
+
         ++row;
     }
 

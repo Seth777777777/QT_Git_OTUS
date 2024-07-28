@@ -1,4 +1,4 @@
-QT += core gui sql
+QT += qml core gui sql
 
 greaterThan(QT_MAJOR_VERSION, 4): QT += widgets
 
@@ -35,3 +35,4 @@ else: unix:!android: target.path = /opt/$${TARGET}/bin
 
 # Добавьте путь к QXlsx
 INCLUDEPATH += C:/QT_Programming/QT_Git_OTUS/QXlsx_source/
+
